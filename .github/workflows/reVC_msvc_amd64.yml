@@ -16,8 +16,17 @@ jobs:
 
     - uses: actions/checkout@v4
       with:
-        submodules: recursive
         fetch-depth: 0
+
+    # This snapshot's .gitmodules lists librw, but the submodule gitlink is
+    # missing from the tree, so `submodules: recursive` can't fetch it and the
+    # build dies with 235x "Cannot open include file: 'rw.h'". Clone it here,
+    # pinned to the librw commit contemporaneous with this Feb-2021 reVC drop.
+    - name: Fetch librw
+      shell: pwsh
+      run: |
+        git clone https://github.com/aap/librw.git vendor/librw
+        git -C vendor/librw checkout bb7fb685316c973e5cf1c1763299d4eef0e1ec4e
 
     - name: Generate Visual Studio solution
       run: .\premake5.exe vs2019 --with-librw
