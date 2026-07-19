@@ -28,6 +28,35 @@ jobs:
         git clone https://github.com/aap/librw.git vendor/librw
         git -C vendor/librw checkout bb7fb685316c973e5cf1c1763299d4eef0e1ec4e
 
+    # Two D3D9 pixel shaders ship as .hlsl but their compiled .inc headers
+    # (neoWorldVC_PS, colourfilterVC_PS) were never committed, so reVC fails
+    # with "Cannot open include file: 'shaders/obj/*.inc'". Compile any missing
+    # ones with the Windows SDK fxc (the repo script wants the legacy DXSDK,
+    # which isn't on the runner) and wrap the bytecode exactly like xxd -i does.
+    - name: Compile missing D3D9 shaders
+      shell: pwsh
+      working-directory: src/extras/shaders
+      run: |
+        $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" -ErrorAction SilentlyContinue |
+               Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $fxc) { throw "fxc.exe not found in any Windows 10 SDK" }
+        Write-Host "Using $($fxc.FullName)"
+        New-Item -ItemType Directory -Force -Path obj | Out-Null
+        $targets = @()
+        Get-ChildItem *PS.hlsl | ForEach-Object { $targets += @{ f = $_.Name; p = 'ps_2_0' } }
+        Get-ChildItem *VS.hlsl | ForEach-Object { $targets += @{ f = $_.Name; p = 'vs_2_0' } }
+        foreach ($t in $targets) {
+          $base = [IO.Path]::GetFileNameWithoutExtension($t.f)
+          $inc  = "obj/$base.inc"
+          if (Test-Path $inc) { continue }
+          & $fxc.FullName /nologo /T $t.p /E main /Fo "obj/$base.cso" $t.f
+          if ($LASTEXITCODE -ne 0) { throw "fxc failed on $($t.f)" }
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path "obj/$base.cso"))
+          $hex = ($bytes | ForEach-Object { '0x{0:x2}' -f $_ }) -join ', '
+          Set-Content -Path $inc -Value "static unsigned char ${base}_cso[] = { $hex };"
+          Write-Host "Generated $inc ($($bytes.Length) bytes)"
+        }
+
     - name: Generate Visual Studio solution
       run: .\premake5.exe vs2019 --with-librw
 
